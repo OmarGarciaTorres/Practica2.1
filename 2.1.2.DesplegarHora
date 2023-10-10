@@ -1,0 +1,99 @@
+import network
+import socket
+import ustruct
+import utime
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+
+# Configurar el objeto I2C y el display OLED
+i2c = I2C(0, sda=Pin(0), scl=Pin(1), freq=400000)
+oled = SSD1306_I2C(128, 64, i2c)
+
+# Conectar a la red WiFi sin contraseña
+ssid = "TecNM_ITT"
+
+# Configurar el modo de la interfaz WiFi a STA_IF (Estación) y activar la interfaz
+sta_if = network.WLAN(network.STA_IF)
+sta_if.active(True)
+
+# Conectar a la red WiFi
+sta_if.connect(ssid)
+
+# Esperar a que se establezca la conexión WiFi
+while not sta_if.isconnected():
+    pass
+
+# Función para obtener la hora actual de un servidor NTP con ajuste para horario de verano
+def obtener_hora_ntp():
+    NTP_SERVER = "pool.ntp.org"
+    NTP_PORT = 123
+    BUFFER_SIZE = 48
+
+    # Crear un socket UDP
+    cliente_ntp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    cliente_ntp.settimeout(1.0)  # Establecer un tiempo de espera para la respuesta del servidor
+
+    # Enviar solicitud al servidor NTP
+    try:
+        addr = socket.getaddrinfo(NTP_SERVER, NTP_PORT)[0][-1]
+        cliente_ntp.sendto(b'\x1b' + 47 * b'\0', addr)
+        data = cliente_ntp.recv(BUFFER_SIZE)
+        cliente_ntp.close()
+
+        # Parsear la respuesta del servidor NTP
+        timestamp = ustruct.unpack("!I", data[40:44])[0] - 2208988800
+
+        # Ajustar la diferencia horaria para Baja California (en segundos)
+        # Durante horario de verano (segundo domingo de marzo al primer domingo de noviembre), UTC-7
+        # Durante el resto del año, UTC-8
+        tm = utime.localtime(timestamp)
+        if 3 <= tm[1] <= 10:  # Marzo a Octubre (horario de verano)
+            diferencia_horaria = -7 * 3600
+        else:  # Resto del año
+            diferencia_horaria = -8 * 3600
+
+        # Calcular la hora local
+        hora_local = timestamp + diferencia_horaria
+
+        return hora_local
+    except Exception as e:
+        print("Error al obtener la hora del servidor NTP:", e)
+        return None
+
+try:
+    while True:
+        # Obtener la hora actual desde el servidor NTP
+        hora_actual = obtener_hora_ntp()
+
+        if hora_actual is not None:
+            # Obtener las horas, minutos y segundos y convertirlos en cadenas
+            hours = str(utime.localtime(hora_actual)[3])
+            minutes = str(utime.localtime(hora_actual)[4])
+            seconds = str(utime.localtime(hora_actual)[5])
+
+            # Formatear las horas, minutos y segundos para que siempre tengan dos dígitos
+            if len(hours) == 1:
+                hours = '0' + hours
+            if len(minutes) == 1:
+                minutes = '0' + minutes
+            if len(seconds) == 1:
+                seconds = '0' + seconds
+
+            # Limpiar el display
+            oled.fill(0)
+
+            # Mostrar el mensaje "Hora actual:" en la posición (0, 0) del display OLED
+            oled.text("Hora actual:", 0, 0)
+
+            # Mostrar la hora formateada (HH:MM:SS) en la posición (0, 20) del display OLED
+            oled.text("{}:{}:{}".format(hours, minutes, seconds), 0, 20)
+
+            # Actualizar el display OLED con el contenido actualizado
+            oled.show()
+
+        # Esperar un segundo antes de volver a obtener la hora y actualizar el display
+        utime.sleep(1)
+
+except KeyboardInterrupt:
+    # Manejar una interrupción del teclado (Ctrl + C) para detener el bucle
+    pass
